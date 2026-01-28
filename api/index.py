@@ -5,15 +5,16 @@ import os
 
 app = FastAPI()
 
-# Enable CORS
+# Proper CORS for Vercel
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST"],
+    allow_credentials=False,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load JSON safely (works on Vercel)
+# Load JSON file safely
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(BASE_DIR, "..", "q-vercel-latency.json")
 
