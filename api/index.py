@@ -1,9 +1,11 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import os
 
 app = FastAPI()
 
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -11,13 +13,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-with open("q-vercel-latency.json", "r") as f:
+# Load JSON safely (works on Vercel)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(BASE_DIR, "..", "q-vercel-latency.json")
+
+with open(DATA_PATH, "r") as f:
     DATA = json.load(f)
 
 
 @app.post("/api")
 async def api(req: Request):
     body = await req.json()
+
     regions = body["regions"]
     threshold = body["threshold_ms"]
 
