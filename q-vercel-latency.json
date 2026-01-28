@@ -1,0 +1,8 @@
+[
+  {
+    "region": "apac",
+    "latency_ms": 123,
+    "uptime_pct": 99.9
+  },
+  ...
+]
