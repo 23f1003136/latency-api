@@ -1,12 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import json
-import os
-import statistics
 
 app = FastAPI()
 
-# Enable CORS for POST from any origin
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,10 +11,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "q-vercel-latency.json")
-
-with open(DATA_FILE, "r") as f:
+with open("q-vercel-latency.json", "r") as f:
     DATA = json.load(f)
+
 
 @app.post("/api")
 async def api(req: Request):
