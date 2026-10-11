@@ -1,57 +1,111 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import math
 import os
 
 app = FastAPI()
 
-# HARD CORS
+# Enable CORS for requests from any origin
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Load data safely
+# Load the telemetry data from the repository root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_FILE = os.path.join(BASE_DIR, "q-vercel-latency.json")
 
-with open(DATA_FILE, "r") as f:
-    DATA = json.load(f)
+try:
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        DATA = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError) as exc:
+    raise RuntimeError(f"Unable to load telemetry data: {exc}") from exc
 
 
-@app.post("/api")
+def percentile_95(values):
+    """Calculate the 95th percentile using linear interpolation."""
+    if not values:
+        return None
+
+    values = sorted(values)
+    position = 0.95 * (len(values) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+
+    if lower == upper:
+        return values[lower]
+
+    return values[lower] + (
+        values[upper] - values[lower]
+    ) * (position - lower)
+
+
+@app.post("/api/latency")
 async def api(req: Request):
-    body = await req.json()
+    try:
+        body = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    regions = body["regions"]
-    threshold = body["threshold_ms"]
+    regions = body.get("regions")
+    threshold = body.get("threshold_ms")
+
+    if not isinstance(regions, list):
+        raise HTTPException(
+            status_code=400,
+            detail="'regions' must be a list"
+        )
+
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(threshold)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="'threshold_ms' must be a finite number"
+        )
 
     result = {}
 
-    for r in regions:
-        rows = [x for x in DATA if x["region"] == r]
+    for region in regions:
+        if not isinstance(region, str):
+            raise HTTPException(
+                status_code=400,
+                detail="Each region must be a string"
+            )
 
-        latencies = [x["latency_ms"] for x in rows]
-        uptimes = [x["uptime_pct"] for x in rows]
+        rows = [
+            row for row in DATA
+            if row.get("region") == region
+        ]
 
-        latencies_sorted = sorted(latencies)
-        p95_index = int(0.95 * (len(latencies_sorted) - 1))
-        p95 = latencies_sorted[p95_index]
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No telemetry data found for region: {region}"
+            )
 
-        result[r] = {
+        latencies = [row["latency_ms"] for row in rows]
+        uptimes = [row["uptime_pct"] for row in rows]
+
+        result[region] = {
             "avg_latency": sum(latencies) / len(latencies),
-            "p95_latency": p95,
+            "p95_latency": percentile_95(latencies),
             "avg_uptime": sum(uptimes) / len(uptimes),
-            "breaches": sum(1 for x in latencies if x > threshold),
+            "breaches": sum(
+                1 for latency in latencies
+                if latency > threshold
+            ),
         }
 
     return result
 
 
-# Explicit OPTIONS handler (THIS FIXES GRADER)
-@app.options("/api")
+@app.options("/api/latency")
 async def options():
     return {}
