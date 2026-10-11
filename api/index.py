@@ -1,20 +1,37 @@
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response
 import json
 import math
 import os
 
 app = FastAPI()
 
-# Enable CORS for POST and OPTIONS requests from any origin
+# Enable CORS for all origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Explicitly add CORS headers to every response
+@app.middleware("http")
+async def ensure_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+    else:
+        response = await call_next(request)
+
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+
+    return response
+
 
 # Load telemetry data from the repository root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,11 +45,13 @@ try:
         raise ValueError("Telemetry data must be a JSON list")
 
 except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
-    raise RuntimeError(f"Unable to load telemetry data: {exc}") from exc
+    raise RuntimeError(
+        f"Unable to load telemetry data: {exc}"
+    ) from exc
 
 
 def percentile_95(values):
-    """Calculate the 95th percentile using linear interpolation."""
+    """Calculate P95 using linear interpolation."""
     if not values:
         return None
 
@@ -119,8 +138,3 @@ async def api(req: Request):
         }
 
     return result
-
-
-@app.options("/api/latency")
-async def options():
-    return {}
