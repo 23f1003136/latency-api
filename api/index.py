@@ -41,7 +41,7 @@ def analytics(request: AnalyticsRequest):
             dtype=float
         )
         uptimes = np.array(
-            [record["uptime_percent"] for record in records],
+            [record["uptime_pct"] for record in records],
             dtype=float
         )
 
