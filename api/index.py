@@ -1,140 +1,55 @@
-
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import Response
 import json
-import math
-import os
+from pathlib import Path
+
+import numpy as np
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 
-# Enable CORS for all origins
+# Allow browser/dashboard requests from any website
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Load the telemetry file once when the function starts
+DATA_FILE = Path(__file__).with_name("q-vercel-latency.json")
+with DATA_FILE.open() as f:
+    telemetry = json.load(f)
 
-# Explicitly add CORS headers to every response
-@app.middleware("http")
-async def ensure_cors_headers(request: Request, call_next):
-    if request.method == "OPTIONS":
-        response = Response(status_code=200)
-    else:
-        response = await call_next(request)
+class AnalyticsRequest(BaseModel):
+    regions: list[str]
+    threshold_ms: float
 
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-
-    return response
-
-
-# Load telemetry data from the repository root
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_FILE = os.path.join(BASE_DIR, "q-vercel-latency.json")
-
-try:
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        DATA = json.load(f)
-
-    if not isinstance(DATA, list):
-        raise ValueError("Telemetry data must be a JSON list")
-
-except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
-    raise RuntimeError(
-        f"Unable to load telemetry data: {exc}"
-    ) from exc
-
-
-def percentile_95(values):
-    """Calculate P95 using linear interpolation."""
-    if not values:
-        return None
-
-    values = sorted(values)
-    position = 0.95 * (len(values) - 1)
-
-    lower = math.floor(position)
-    upper = math.ceil(position)
-
-    if lower == upper:
-        return values[lower]
-
-    return values[lower] + (
-        values[upper] - values[lower]
-    ) * (position - lower)
-
-
-@app.post("/api/latency")
-async def api(req: Request):
-    try:
-        body = await req.json()
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON body"
-        )
-
-    if not isinstance(body, dict):
-        raise HTTPException(
-            status_code=400,
-            detail="Request body must be a JSON object"
-        )
-
-    regions = body.get("regions")
-    threshold = body.get("threshold_ms")
-
-    if not isinstance(regions, list):
-        raise HTTPException(
-            status_code=400,
-            detail="'regions' must be a list"
-        )
-
-    if (
-        isinstance(threshold, bool)
-        or not isinstance(threshold, (int, float))
-        or not math.isfinite(threshold)
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="'threshold_ms' must be a finite number"
-        )
-
+@app.post("/")
+def analytics(request: AnalyticsRequest):
     result = {}
 
-    for region in regions:
-        if not isinstance(region, str):
-            raise HTTPException(
-                status_code=400,
-                detail="Each region must be a string"
-            )
-
-        rows = [
-            row for row in DATA
-            if row.get("region") == region
+    for region in request.regions:
+        records = [
+            record
+            for record in telemetry
+            if record.get("region") == region
         ]
 
-        if not rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No telemetry data found for region: {region}"
-            )
-
-        latencies = [row["latency_ms"] for row in rows]
-        uptimes = [row["uptime_pct"] for row in rows]
+        latencies = np.array(
+            [record["latency_ms"] for record in records],
+            dtype=float
+        )
+        uptimes = np.array(
+            [record["uptime_percent"] for record in records],
+            dtype=float
+        )
 
         result[region] = {
-            "avg_latency": sum(latencies) / len(latencies),
-            "p95_latency": percentile_95(latencies),
-            "avg_uptime": sum(uptimes) / len(uptimes),
-            "breaches": sum(
-                1 for latency in latencies
-                if latency > threshold
-            ),
+            "avg_latency": float(np.mean(latencies)),
+            "p95_latency": float(np.percentile(latencies, 95)),
+            "avg_uptime": float(np.mean(uptimes)),
+            "breaches": int(np.sum(latencies > request.threshold_ms)),
         }
 
     return result
